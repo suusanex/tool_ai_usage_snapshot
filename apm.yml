@@ -1,0 +1,13 @@
+name: tool_ai_usage_snapshot
+version: 1.0.0
+description: APM project for tool_ai_usage_snapshot
+author: suusanex
+dependencies:
+  apm:
+  - suusanex/coding_agent_plan_and_verify_process/apm-packages/token-aware-guardrail-kernel-flow
+  - suusanex/coding_agent_plan_and_verify_process/apm-packages/token-aware-full-coverage-3layer
+  - suusanex/coding_agent_plan_and_verify_process/apm-packages/codex-first-ai-development-process
+  - suusanex/agent_skills_dotnet_utility/.agents/skills/dotnet-file-based-apps
+  mcp: []
+includes: auto
+scripts: {}
