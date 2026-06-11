@@ -1,0 +1,9 @@
+period_start,period_end,user_key,user_email,display_name,department,service,license_status,active,event_count,event_unit,last_activity_at,collection_method,source_confidence,imported_at,notes
+2026-05-01,2026-05-31,u1001,alice@example.com,Alice Tanaka,Design Team,copilot-chat,licensed,true,120,requests,2026-06-07,manual_csv,high,2026-06-10,manual sample
+2026-05-01,2026-05-31,u1002,bob@example.com,Bob Ito,Design Team,copilot-chat,licensed,false,0,requests,2026-03-01,manual_csv,low,2026-06-10,"old row; candidate only"
+2026-05-01,2026-05-31,u1003,carol@example.com,Carol Ono,Platform Team,unknown,unlicensed,true,15,requests,2026-06-09,manual_csv,medium,2026-06-10,normal
+2026-05-01,2026-05-31,u1001,alice@example.com,Alice Tanaka,Design Team,copilot-workflow,licensed,unknown,unknown,minutes,2026-06-08,manual_aggregate,medium,2026-06-10,manual aggregate method
+2026-05-01,2026-05-31,,dan@example.com,Dan K,Platform Team,data-analyzer,licensed,unknown,5,queries,unknown,manual_csv,low,2026-02-01,text
+2026-05-01,2026-05-31,u1004,eve@example.com,Eve Lin,Data Team,copilot-chat,licensed,unknown,unknown,requests,unknown,manual_aggregate,unknown,2026-01-15,"very long body text
+which simulates multiline data and should
+only trigger body_data_risk"
