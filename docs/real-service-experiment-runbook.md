@@ -56,7 +56,7 @@ D:\Data\local-ai-usage-snapshot-experiments\<yyyyMMdd>\<service>\
 | Microsoft 365 Copilot | Microsoft Graph Copilot reports API、Microsoft 365 admin center usage report | `Reports.Read.All`; delegated時はReports Reader等のEntraロール | admin centerでCSV export可能 | Graph APIでJSONまたはCSV形式を取得 | tenant admin consent、匿名化設定、ライセンス有無 |
 | ユーザーローカル ChatAI | 管理ダッシュボード | 公開情報上、利用状況取得APIは確認できず | 利用状況管理ダッシュボードあり。CSV export可否は公開情報だけでは未確認 | APIではなく、管理画面/CSVの列確認から開始 | 管理者権限、CSV export可否、部署/個人別粒度 |
 | ChatGPT Business | Business workspaceのBilling/credits/spend controls、管理者向けusage analytics | 公開情報上、Workspace Analytics CSV APIは確認できず。Business subscriptionはAPI Platform利用を含まない | Business workspaceの一般データexportは不可。Billing/usage analytics画面の確認が中心 | 管理画面で取得できるcredits/usage情報を手動またはCSV相当で確認 | owner/admin権限、Businessで取得できる実際のusage項目 |
-| Codex（ChatGPT Business契約） | ChatGPT Businessのseat/credits/spend controls、Codex rate card | Standard ChatGPT seatはCodex baseline accessを含む。Codex seatはCodex-onlyでusage-based、workspace creditsが必要 | Workspace settings > Billingでcredits/spend controlsを確認 | Codex単体APIではなく、Business workspaceのcredit/seat/usage情報として扱う | Codex seat有無、standard seatでの利用、per-user credit limit/usage確認 |
+| Codex（ChatGPT Business契約） | Codex利用状況画面の手動DL JSON | 初期実装ではAPI取得を主経路にしない | Web画面からusage JSONを手動ダウンロード可能 | 手動DL JSONを読み取り、ユーザー別利用量を共通CSVへ変換 | JSON取得頻度、取得対象期間、ユーザーID対応 |
 
 ## 5. API/取得検証スクリプト対象
 
@@ -68,7 +68,7 @@ D:\Data\local-ai-usage-snapshot-experiments\<yyyyMMdd>\<service>\
 | 2 | Microsoft 365 Copilot | `experiments/m365-copilot-usage-probe.cs` | Graph access tokenまたはapp credentials | JSON/CSV列、期間、匿名化有無 |
 | 3 | ユーザーローカル ChatAI | `experiments/userlocal-chatai-csv-probe.cs` | 管理画面から取得した匿名化CSVまたは列名サンプル | 列名、型、部署/個人別粒度 |
 | 4 | ChatGPT Business | `experiments/chatgpt-business-export-probe.cs` | 管理画面から取得したusage/credits情報の匿名化CSVまたは手動転記CSV | seat/usage/credits列の変換可否 |
-| 5 | Codex（ChatGPT Business契約） | `experiments/chatgpt-business-codex-credits-probe.cs` | Billing/credits/spend controlsの匿名化CSVまたは手動転記CSV | Codex利用をservice行へ変換できるか |
+| 5 | Codex（ChatGPT Business契約） | `experiments/codex-usage-json-probe.cs` | Web画面から手動DLした匿名化JSON | Codex利用をservice行へ変換できるか |
 
 スクリプト作成時のルール:
 
@@ -83,7 +83,7 @@ D:\Data\local-ai-usage-snapshot-experiments\<yyyyMMdd>\<service>\
 実験では、各サービスから次の列へ寄せられるかを確認する。
 
 ```csv
-period_start,period_end,user_key,user_email,display_name,department,service,license_status,active,event_count,event_unit,last_activity_at,collection_method,source_confidence,imported_at,notes
+period_start,period_end,user_key,user_email,display_name,department,service,license_status,active,ai_interaction_count,ai_interaction_unit,ai_interaction_basis,active_days,active_surface_count,last_activity_at,collection_method,source_confidence,imported_at,notes
 ```
 
 | 共通列 | 取得方針 |
@@ -96,8 +96,11 @@ period_start,period_end,user_key,user_email,display_name,department,service,lice
 | `service` | `github-copilot`, `m365-copilot`, `userlocal-chatai`, `chatgpt-business`, `codex-chatgpt-business` のいずれか。 |
 | `license_status` | 座席割当または契約ユーザーなら `licensed`、未割当なら `unlicensed`、不明なら `unknown`。 |
 | `active` | 期間内利用が確認できるなら `true`、ライセンスありで利用ゼロなら `false`、取れなければ `unknown`。 |
-| `event_count` | リクエスト数、メッセージ数、アクティブ日数、利用イベント数、credits消費など、サービスで取れる代表値を入れる。取れない場合は `unknown`。 |
-| `event_unit` | `requests`, `messages`, `active_days`, `credits`, `events`, `seats` など。 |
+| `ai_interaction_count` | ユーザーがAIへ送った入力1回相当の回数を入れる。取れない場合は `unknown`。 |
+| `ai_interaction_unit` | 初期版は `ai_interactions` を使う。 |
+| `ai_interaction_basis` | `chatgpt_business_sent_messages`、`codex_usage_turns`、`m365_copilot_prompts_submitted_all_apps` などの変換根拠を入れる。 |
+| `active_days` | 期間内アクティブ日数。取れない場合は `unknown`。 |
+| `active_surface_count` | 利用が確認できたアプリ面数またはクライアント面数。取れない場合は `unknown`。 |
 | `last_activity_at` | ユーザー単位の最終利用日が取れる場合だけ入れる。 |
 | `collection_method` | 手動CSVは `manual_csv`、画面転記や集計値だけなら `manual_aggregate`。 |
 | `source_confidence` | ユーザー単位かつ期間が明確なら `high`、集計値や一部欠損ありなら `medium`、画面転記・推定なら `low`。 |
@@ -140,7 +143,7 @@ dotnet run --file ai_usage_snapshot.cs -- --input <common-schema.csv> --output <
 1. orgまたはenterpriseの対象を指定して、最新28日または特定日のmetrics endpointをGETする。
 2. レスポンスのユーザー識別子、日付、機能別イベント、集計値を列名だけ抽出する。
 3. GitHub loginを `user_key` にできるか、メール対応表が必要かを記録する。
-4. 代表的なイベント数を `event_count` にできるか確認する。
+4. `ai_interaction_count` に使える値と、その `ai_interaction_basis` を確認する。
 
 人手で残ること:
 
@@ -157,6 +160,7 @@ dotnet run --file ai_usage_snapshot.cs -- --input <common-schema.csv> --output <
 公開情報で分かっていること:
 
 - Microsoft 365 admin centerのCopilot usage reportはCSV export可能。
+- Admin center手動DL CSVには `Prompts submitted for All Apps`、`Active Usage Days for All Apps`、アプリ別 `Last activity date` 系列が含まれる。
 - Microsoft Graphには `GET /copilot/reports/getMicrosoft365CopilotUsageUserDetail(period='D7')` がある。
 - Graph APIのleast privileged permissionは `Reports.Read.All`。
 - delegated accessではReports Reader、AI AdministratorなどのEntraロールが必要。
@@ -166,10 +170,11 @@ dotnet run --file ai_usage_snapshot.cs -- --input <common-schema.csv> --output <
 
 スクリプトで検証すること:
 
-1. Graph tokenを使い、`period='D7'` のJSON取得を試す。
-2. `$format=text/csv` の取得も試し、CSV列を確認する。
-3. userPrincipalName/displayNameが匿名化されるテナント設定か確認する。
-4. `lastActivityDate` を `active` と `last_activity_at` に変換できるか確認する。
+1. Admin center手動DL CSVを読み取り、`Prompts submitted for All Apps` を `ai_interaction_count` に変換する。
+2. `Active Usage Days for All Apps` を `active_days` に変換する。
+3. 各 `Last activity date of ...` の非空列数を `active_surface_count` に変換する。
+4. `Last Activity Date` を `active` と `last_activity_at` に変換する。
+5. Graph APIは補助経路として残し、CSVと取得粒度を比較する。
 
 人手で残ること:
 
@@ -179,7 +184,7 @@ dotnet run --file ai_usage_snapshot.cs -- --input <common-schema.csv> --output <
 
 暫定判定:
 
-- `READY_FOR_API_PROBE`
+- `MANUAL_CSV_FIRST`
 
 ### 8.3 ユーザーローカル ChatAI
 
@@ -196,7 +201,7 @@ dotnet run --file ai_usage_snapshot.cs -- --input <common-schema.csv> --output <
 1. 管理画面からCSV exportできる場合、匿名化CSVを `experiments/userlocal-chatai-csv-probe.cs` で読み取る。
 2. CSV exportがない場合、画面の列名と数値だけを手動転記CSVにする。
 3. 部署別、個人別、日別、機能別、モデル別のどれが取得できるかを記録する。
-4. `event_count` は利用回数、メッセージ数、または画面上の代表指標へ割り当てる。
+4. `送信メッセージ数` を `ai_interaction_count` とし、`ai_interaction_basis=chatgpt_business_sent_messages` を設定する。
 
 人手で残ること:
 
@@ -227,7 +232,7 @@ dotnet run --file ai_usage_snapshot.cs -- --input <common-schema.csv> --output <
 1. 管理画面から取得できるBilling/usage/creditsの列を確認する。
 2. CSV export相当がある場合は匿名化CSVを読み取る。
 3. CSV exportがない場合は、seat数、利用者、usage/creditsの画面値を手動転記CSVにする。
-4. `service=chatgpt-business` として、ChatGPT自体のseat/active/usageを共通CSVへ寄せる。
+4. `service=chatgpt-business` として、`送信メッセージ数 -> ai_interaction_count`、`消費クレジット -> notesまたは詳細出力` で共通CSVへ寄せる。
 
 人手で残ること:
 
@@ -251,20 +256,22 @@ dotnet run --file ai_usage_snapshot.cs -- --input <common-schema.csv> --output <
 
 スクリプトで検証すること:
 
-1. Business workspaceのBilling/credits/spend controlsから、Codex seat数、Codex credits、user/seat別limitを確認する。
-2. CSV export相当があれば匿名化CSVを読み取る。
-3. CSV exportがない場合は、画面上のCodex credits/seat/limit/usageを手動転記CSVにする。
-4. `service=codex-chatgpt-business` として共通CSVへ寄せる。
+1. Web画面から手動DLしたusage JSONを読み取る。
+2. `data` 配列の `date`、`user_id`、`n_user_messages_total`、`n_new_sessions_total`、`text_total_tokens`、`clients` を確認する。
+3. `user_id` ごとに期間集計し、`n_user_messages_total` の合計を `ai_interaction_count` にする。
+4. `date` のユニーク数を `active_days`、`clients.client_id` のユニーク数を `active_surface_count` にする。
+5. `service=codex-chatgpt-business`、`ai_interaction_basis=codex_manual_user_messages` で共通CSVへ寄せる。
 
 人手で残ること:
 
-- standard ChatGPT seatだけでCodexを使っているのか、Codex seatを追加しているのか確認する。
-- per-userのCodex usageまたはcredit消費が画面上で確認できるか確認する。
-- Codex利用量をChatGPT Business本体と分けて集計できるか確認する。
+- Web画面からJSONを取得できる権限と操作手順を確認する。
+- 手動DL JSONが何日分の期間を含むか、取得日によって変動するか確認する。
+- `user_id` と社内ユーザーID/メールアドレスの対応可否を確認する。
+- 初期実装ではAPI取得を主経路にせず、手動DL JSONを優先する。
 
 暫定判定:
 
-- `MANUAL_ADMIN_SCREEN_FIRST`
+- `MANUAL_JSON_FIRST`
 
 ## 9. 将来課題
 
@@ -289,6 +296,7 @@ dotnet run --file ai_usage_snapshot.cs -- --input <common-schema.csv> --output <
 | `MANUAL_DASHBOARD_FIRST` | 公開情報で管理ダッシュボードは確認できたが、API/CSV仕様は不明。 | 人手で画面とCSV export有無を確認し、変換用サンプルを作る。 |
 | `MANUAL_ADMIN_SCREEN_FIRST` | 管理画面のBilling/usage/credits確認が主経路。 | 画面上の列やCSV export可否を確認し、必要なら手動転記CSVで検証する。 |
 | `MANUAL_CSV_FIRST` | 公開情報でCSV exportは確認できたが、APIは未確認。 | 人手でCSVを出し、変換スクリプトを作る。 |
+| `MANUAL_JSON_FIRST` | 管理画面からJSONを手動取得でき、API取得を主経路にしない。 | 手動DL JSONを読み、共通CSV変換スクリプトを作る。 |
 | `NEEDS_MAPPING_SPIKE` | API/CSVはあるが、ユーザー識別子、期間、event unitなどの解釈が曖昧。 | `docs/source-mapping/<service>.md` を作る。 |
 | `BLOCKED_BY_PERMISSION` | 管理権限または契約が不足する。 | 必要権限、担当者、代替手段を記録する。 |
 | `OUT_OF_SCOPE_DATA` | 本文、プロンプト、生成結果、コード断片を含む取得しかできない。 | MVP対象外として扱い、利用量だけ取れる方法を再調査する。 |
@@ -343,7 +351,7 @@ dotnet run --file ai_usage_snapshot.cs -- --input <common-schema.csv> --output <
 推奨順:
 
 1. GitHub Copilot: APIと権限が明確で、ユーザー単位利用の検証に向く。
-2. Microsoft 365 Copilot: Graph APIとCSV exportの両方があり、最終活動日を共通スキーマへ寄せやすい。
+2. Microsoft 365 Copilot: Admin center CSVから prompts と active days が取れるため、横断比較向けの共通単位へ寄せやすい。
 3. ユーザーローカル ChatAI: 実際の利用ダッシュボードを確認し、CSV export有無と部署/個人別粒度を早めに把握する。
 4. ChatGPT Business: BusinessのBilling/usage/credits画面で取れる粒度を確認する。
 5. Codex（ChatGPT Business契約）: ChatGPT Businessのseat/credits/spend controlsから、ChatGPT本体と分けて集計できるか確認する。

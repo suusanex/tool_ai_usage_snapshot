@@ -152,8 +152,8 @@ static void ProcessSnapshot(SnapshotExecutionOptions options)
         if (record.Active == Tristate.True) user.ActiveServices.Add(serviceKey);
         if (record.Active == Tristate.False) user.InactiveServices.Add(serviceKey);
 
-        if (record.EventCount.IsKnown) user.EventCountTotal += record.EventCount.Value;
-        else user.EventCountUnknownRows++;
+        if (record.AiInteractionCount.IsKnown) user.AiInteractionCountTotal += record.AiInteractionCount.Value;
+        else user.AiInteractionCountUnknownRows++;
 
         if (record.LastActivityAt.IsKnown && (!user.LastActivityAt.IsKnown || record.LastActivityAt.Value > user.LastActivityAt.Value))
         {
@@ -164,8 +164,8 @@ static void ProcessSnapshot(SnapshotExecutionOptions options)
         var dept = GetOrAdd(departmentAggrs, department, _ => new DepartmentAggregation());
         dept.Users.Add(resolvedUserKey);
         dept.RecordCount++;
-        dept.EventCountTotal += record.EventCount.IsKnown ? record.EventCount.Value : 0;
-        dept.EventCountUnknownRows += record.EventCount.IsKnown ? 0 : 1;
+        dept.AiInteractionCountTotal += record.AiInteractionCount.IsKnown ? record.AiInteractionCount.Value : 0;
+        dept.AiInteractionCountUnknownRows += record.AiInteractionCount.IsKnown ? 0 : 1;
         if (record.LicenseStatus == LicenseStatus.Licensed)
         {
             dept.LicensedUsers.Add(resolvedUserKey);
@@ -183,7 +183,7 @@ static void ProcessSnapshot(SnapshotExecutionOptions options)
 
         var service = GetOrAdd(serviceAggrs, serviceKey, _ => new ServiceAggregation { Service = serviceKey });
         service.UserCountKeys.Add(resolvedUserKey);
-        service.EventCountTotal += record.EventCount.IsKnown ? record.EventCount.Value : 0;
+        service.AiInteractionCountTotal += record.AiInteractionCount.IsKnown ? record.AiInteractionCount.Value : 0;
         service.RecordCount++;
         if (record.LicenseStatus == LicenseStatus.Licensed)
         {
@@ -275,17 +275,17 @@ static (string Reason, string Confidence, bool IsMatch) EvaluateUnusedCandidate(
     }
 
     if (record.Active == Tristate.False &&
-        record.EventCount.IsKnown &&
-        record.EventCount.Value == 0)
+        record.AiInteractionCount.IsKnown &&
+        record.AiInteractionCount.Value == 0)
     {
         return ("inactive_and_no_events", "high", true);
     }
 
     if (record.Active == Tristate.Unknown &&
-        record.EventCount.IsKnown &&
-        record.EventCount.Value == 0)
+        record.AiInteractionCount.IsKnown &&
+        record.AiInteractionCount.Value == 0)
     {
-        return ("event_count_zero_with_unknown_activity", "low", true);
+        return ("ai_interaction_zero_with_unknown_activity", "low", true);
     }
 
     return ("", "", false);
@@ -313,8 +313,8 @@ static void WriteSummaries(
             LicensedServiceCount = x.LicensedServices.Count,
             ActiveServiceCount = x.ActiveServices.Count,
             InactiveServiceCount = x.InactiveServices.Count,
-            EventCountTotal = x.EventCountTotal,
-            EventCountUnknownRows = x.EventCountUnknownRows,
+            AiInteractionCountTotal = x.AiInteractionCountTotal,
+            AiInteractionCountUnknownRows = x.AiInteractionCountUnknownRows,
             LastActivityAtLatest = x.LastActivityAt.IsKnown ? x.LastActivityAt.Value.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) : "unknown",
             DormantCandidateCount = x.DormantCandidateCount,
             LicenseUnusedCandidateCount = x.LicenseUnusedCandidateCount
@@ -330,8 +330,8 @@ static void WriteSummaries(
             LicensedUserCount = x.Value.LicensedUsers.Count,
             ActiveUserCount = x.Value.ActiveUsers.Count,
             InactiveUserCount = x.Value.InactiveUsers.Count,
-            EventCountTotal = x.Value.EventCountTotal,
-            EventCountUnknownRows = x.Value.EventCountUnknownRows,
+            AiInteractionCountTotal = x.Value.AiInteractionCountTotal,
+            AiInteractionCountUnknownRows = x.Value.AiInteractionCountUnknownRows,
             RecordCount = x.Value.RecordCount
         })
         .OrderBy(x => x.Department, StringComparer.OrdinalIgnoreCase)
@@ -345,7 +345,7 @@ static void WriteSummaries(
             LicensedUserCount = x.Value.LicensedUsers.Count,
             ActiveUserCount = x.Value.ActiveUsers.Count,
             InactiveUserCount = x.Value.InactiveUsers.Count,
-            EventCountTotal = x.Value.EventCountTotal,
+            AiInteractionCountTotal = x.Value.AiInteractionCountTotal,
             RecordCount = x.Value.RecordCount
         })
         .OrderBy(x => x.Service, StringComparer.OrdinalIgnoreCase)
@@ -447,6 +447,21 @@ static IEnumerable<string> BuildQualityFlags(UsageRecord record, DateTimeOffset 
         yield return "unknown_activity";
     }
 
+    if (!record.AiInteractionCount.IsKnown)
+    {
+        yield return "unknown_ai_interaction";
+    }
+
+    if (!record.ActiveDays.IsKnown)
+    {
+        yield return "unknown_active_days";
+    }
+
+    if (!record.ActiveSurfaceCount.IsKnown)
+    {
+        yield return "unknown_active_surface_count";
+    }
+
     if (record.CollectionMethod == CollectionMethod.ManualAggregate)
     {
         yield return "manual_aggregate";
@@ -506,8 +521,11 @@ static List<UsageRecord> ReadRecords(string inputCsvPath)
         "service",
         "license_status",
         "active",
-        "event_count",
-        "event_unit",
+        "ai_interaction_count",
+        "ai_interaction_unit",
+        "ai_interaction_basis",
+        "active_days",
+        "active_surface_count",
         "last_activity_at",
         "collection_method",
         "source_confidence",
@@ -565,7 +583,9 @@ static UsageRecord ParseRecord(Dictionary<string, string> raw, int rowNumber)
     var periodEnd = ParseDateOrUnknown(GetField(raw, "period_end"), rowNumber, "period_end");
     var licenseStatus = ParseLicenseStatus(GetField(raw, "license_status"), rowNumber);
     var active = ParseActive(GetField(raw, "active"), rowNumber);
-    var eventCount = ParseKnownInt(GetField(raw, "event_count"), rowNumber);
+    var aiInteractionCount = ParseKnownInt(GetField(raw, "ai_interaction_count"), rowNumber, "ai_interaction_count");
+    var activeDays = ParseKnownInt(GetField(raw, "active_days"), rowNumber, "active_days");
+    var activeSurfaceCount = ParseKnownInt(GetField(raw, "active_surface_count"), rowNumber, "active_surface_count");
     var lastActivityAt = ParseDateOrUnknown(GetField(raw, "last_activity_at"), rowNumber, "last_activity_at");
     var importedAt = ParseDateOrUnknown(GetField(raw, "imported_at"), rowNumber, "imported_at");
 
@@ -580,8 +600,11 @@ static UsageRecord ParseRecord(Dictionary<string, string> raw, int rowNumber)
         NormalizeValue(service),
         licenseStatus,
         active,
-        eventCount,
-        NormalizeValue(GetField(raw, "event_unit")),
+        aiInteractionCount,
+        NormalizeValue(GetField(raw, "ai_interaction_unit")),
+        NormalizeValue(GetField(raw, "ai_interaction_basis")),
+        activeDays,
+        activeSurfaceCount,
         lastActivityAt,
         ParseCollectionMethod(GetField(raw, "collection_method"), rowNumber),
         ParseSourceConfidence(GetField(raw, "source_confidence"), rowNumber),
@@ -661,7 +684,7 @@ static Tristate ParseActive(string? value, int rowNumber)
     };
 }
 
-static KnownValue<int> ParseKnownInt(string? value, int rowNumber)
+static KnownValue<int> ParseKnownInt(string? value, int rowNumber, string fieldName)
 {
     if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "unknown", StringComparison.OrdinalIgnoreCase))
     {
@@ -675,7 +698,7 @@ static KnownValue<int> ParseKnownInt(string? value, int rowNumber)
 
     throw new SnapshotCliException(
         ExitCodeCsvValueError,
-        $"Row {rowNumber}: invalid event_count: '{value}'.");
+        $"Row {rowNumber}: invalid {fieldName}: '{value}'.");
 }
 
 static CollectionMethod ParseCollectionMethod(string? value, int rowNumber)
@@ -843,8 +866,11 @@ public sealed record UsageRecord(
     string Service,
     LicenseStatus LicenseStatus,
     Tristate Active,
-    KnownValue<int> EventCount,
-    string EventUnit,
+    KnownValue<int> AiInteractionCount,
+    string AiInteractionUnit,
+    string AiInteractionBasis,
+    KnownValue<int> ActiveDays,
+    KnownValue<int> ActiveSurfaceCount,
     KnownValue<DateTimeOffset> LastActivityAt,
     CollectionMethod CollectionMethod,
     SourceConfidence SourceConfidence,
@@ -863,8 +889,8 @@ public sealed record UserAggregation
     public HashSet<string> UnknownLicenseServices { get; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> ActiveServices { get; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> InactiveServices { get; } = new(StringComparer.OrdinalIgnoreCase);
-    public int EventCountTotal { get; set; }
-    public int EventCountUnknownRows { get; set; }
+    public int AiInteractionCountTotal { get; set; }
+    public int AiInteractionCountUnknownRows { get; set; }
     public KnownValue<DateTimeOffset> LastActivityAt { get; set; } = KnownValue<DateTimeOffset>.Unknown();
     public int DormantCandidateCount { get; set; }
     public int LicenseUnusedCandidateCount { get; set; }
@@ -876,8 +902,8 @@ public sealed record DepartmentAggregation
     public HashSet<string> LicensedUsers { get; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> ActiveUsers { get; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> InactiveUsers { get; } = new(StringComparer.OrdinalIgnoreCase);
-    public int EventCountTotal { get; set; }
-    public int EventCountUnknownRows { get; set; }
+    public int AiInteractionCountTotal { get; set; }
+    public int AiInteractionCountUnknownRows { get; set; }
     public int RecordCount { get; set; }
 }
 
@@ -888,7 +914,7 @@ public sealed record ServiceAggregation
     public HashSet<string> LicensedUsers { get; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> ActiveUsers { get; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> InactiveUsers { get; } = new(StringComparer.OrdinalIgnoreCase);
-    public int EventCountTotal { get; set; }
+    public int AiInteractionCountTotal { get; set; }
     public int RecordCount { get; set; }
 }
 
@@ -911,8 +937,8 @@ public sealed record UserSummaryRow
     public int LicensedServiceCount { get; init; }
     public int ActiveServiceCount { get; init; }
     public int InactiveServiceCount { get; init; }
-    public int EventCountTotal { get; init; }
-    public int EventCountUnknownRows { get; init; }
+    public int AiInteractionCountTotal { get; init; }
+    public int AiInteractionCountUnknownRows { get; init; }
     public string LastActivityAtLatest { get; init; } = "unknown";
     public int DormantCandidateCount { get; init; }
     public int LicenseUnusedCandidateCount { get; init; }
@@ -925,8 +951,8 @@ public sealed record DepartmentSummaryRow
     public int LicensedUserCount { get; init; }
     public int ActiveUserCount { get; init; }
     public int InactiveUserCount { get; init; }
-    public int EventCountTotal { get; init; }
-    public int EventCountUnknownRows { get; init; }
+    public int AiInteractionCountTotal { get; init; }
+    public int AiInteractionCountUnknownRows { get; init; }
     public int RecordCount { get; init; }
 }
 
@@ -937,7 +963,7 @@ public sealed record ServiceSummaryRow
     public int LicensedUserCount { get; init; }
     public int ActiveUserCount { get; init; }
     public int InactiveUserCount { get; init; }
-    public int EventCountTotal { get; init; }
+    public int AiInteractionCountTotal { get; init; }
     public int RecordCount { get; init; }
 }
 
